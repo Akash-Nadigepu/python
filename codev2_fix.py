@@ -21,7 +21,7 @@ def triage_vulnerabilities(input_path, output_dir):
     categorizes it into four types, generates separate Excel reports, 
     and prints a severity count summary.
     """
-    print(f"Starting triage for file: {input_path}")
+    print(f"Starting analysis for file: {input_path}")
     
     # 1. Read the Data (FIXED: pd.read_csv with low_memory=False to suppress DtypeWarning)
     try:
