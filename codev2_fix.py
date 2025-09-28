@@ -4,8 +4,8 @@ import sys
 import re
 
 # --- Configuration ---
-# Output folder will be dynamically created: Vulnerability_Reports_<Month>
-OUTPUT_BASE_DIRECTORY = 'Vulnerability_Reports'
+# Output folder will be dynamically created: Triage_Vulnerability_Reports_<Month>
+OUTPUT_BASE_DIRECTORY = 'Triage_Vulnerability_Reports'
 
 # IMPORTANT: These column names must match the EXACT headers in your CSV.
 COLUMN_ASSET_NAME = 'AssetName'       
@@ -17,20 +17,23 @@ COLUMN_SEVERITY = 'Severity'
 def extract_month_shortcut(filename):
     """
     Extracts a 3-letter month shortcut (e.g., 'Aug') from the filename 
+    by specifically looking for an abbreviation followed by a number (day), 
     and returns it in title case, or None if not found.
     """
-    # Regex to find three consecutive letters typically starting with a capital,
-    # often followed by numbers (like 'Aug' in 'Report_Aug_10_2025...')
-    month_match = re.search(r'(_|^)([A-Za-z]{3})[a-z]*[-_\d]', filename, re.IGNORECASE)
+    # CORRECTED REGEX: Looks for an underscore/start of string, followed by a 3-letter month (A-Z),
+    # and then immediately followed by a digit (the day). This targets the 'Aug_10' pattern.
+    # The '([_])([A-Za-z]{3})\d+' ensures we capture the month abbreviation right before a number (the day).
+    month_match = re.search(r'([_])([A-Za-z]{3})\d+', filename, re.IGNORECASE)
     if month_match:
-        # Return the 3-letter abbreviation found in group 2
+        # Returns the three-letter segment found in group 2
         return month_match.group(2).title()
     return None
 
 def triage_vulnerabilities(input_path, output_dir_base):
     """
-    Reads the full vulnerability list, categorizes it into four types, 
-    and generates separate Excel reports with a severity count summary.
+    Reads the full vulnerability list from a CSV file (given by input_path), 
+    categorizes it into four types, generates separate Excel reports, 
+    and prints a severity count summary.
     """
     # 1. Dynamic Month Extraction and Output Setup
     filename = os.path.basename(input_path)
@@ -43,7 +46,7 @@ def triage_vulnerabilities(input_path, output_dir_base):
         output_dir = output_dir_base
         print("Warning: Could not detect month in filename. Using generic output folder.")
         
-    print(f"Starting analysis for file: {input_path}")
+    print(f"Starting triage for file: {input_path}")
     
     # 2. Read the Data (pd.read_csv with low_memory=False to suppress DtypeWarning)
     try:
@@ -116,12 +119,12 @@ def triage_vulnerabilities(input_path, output_dir_base):
         
         # Write the Excel file
         df_slice.to_excel(output_filename, index=False, engine='openpyxl')
-        print(f"Created file: {output_filename} with {len(df_slice)} rows.")
+        print(f"✅ Created file: {output_filename} with {len(df_slice)} rows.")
     
     # --- 5. Print Summary Report (remains the same) ---
 
     print("\n" + "="*50)
-    print("      VULNERABILITY SEVERITY SUMMARY")
+    print("      VULNERABILITY TRIAGE AND SEVERITY SUMMARY")
     print("="*50)
     print(f"Total Records Processed: {total_rows}\n")
 
