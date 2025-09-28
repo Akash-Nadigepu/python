@@ -1,34 +1,54 @@
 import pandas as pd
 import os
 import sys
+import re
 
 # --- Configuration ---
-# INPUT_FILE is now expected as the first command-line argument (sys.argv[1])
-# We only define the output directory and the column names (which should be static headers)
+# Output folder will be dynamically created: Vulnerability_Reports_<Month>
+OUTPUT_BASE_DIRECTORY = 'Vulnerability_Reports'
 
-OUTPUT_DIRECTORY = 'Vulnerability_Reports'
-
-# IMPORTANT: These column names must match the EXACT headers in CSV.
+# IMPORTANT: These column names must match the EXACT headers in your CSV.
 COLUMN_ASSET_NAME = 'AssetName'       
 COLUMN_SUBSCRIPTION = 'SubscriptionName' 
 COLUMN_LOCATION_PATH = 'LocationPath'  
 COLUMN_SEVERITY = 'Severity'         
 # ---------------------
 
-def triage_vulnerabilities(input_path, output_dir):
+def extract_month_shortcut(filename):
     """
-    Reads the full vulnerability list from a CSV file (given by input_path), 
-    categorizes it into four types, generates separate Excel reports, 
-    and prints a severity count summary.
+    Extracts a 3-letter month shortcut (e.g., 'Aug') from the filename 
+    and returns it in title case, or None if not found.
     """
+    # Regex to find three consecutive letters typically starting with a capital,
+    # often followed by numbers (like 'Aug' in 'Report_Aug_10_2025...')
+    month_match = re.search(r'(_|^)([A-Za-z]{3})[a-z]*[-_\d]', filename, re.IGNORECASE)
+    if month_match:
+        # Return the 3-letter abbreviation found in group 2
+        return month_match.group(2).title()
+    return None
+
+def triage_vulnerabilities(input_path, output_dir_base):
+    """
+    Reads the full vulnerability list, categorizes it into four types, 
+    and generates separate Excel reports with a severity count summary.
+    """
+    # 1. Dynamic Month Extraction and Output Setup
+    filename = os.path.basename(input_path)
+    month_shortcut = extract_month_shortcut(filename)
+    
+    if month_shortcut:
+        output_dir = f"{output_dir_base}_{month_shortcut}"
+        print(f"Detected month: {month_shortcut}. Output folder: {output_dir}")
+    else:
+        output_dir = output_dir_base
+        print("Warning: Could not detect month in filename. Using generic output folder.")
+        
     print(f"Starting analysis for file: {input_path}")
     
-    # 1. Read the Data (FIXED: pd.read_csv with low_memory=False to suppress DtypeWarning)
+    # 2. Read the Data (pd.read_csv with low_memory=False to suppress DtypeWarning)
     try:
-        # Use pd.read_csv for CSV files. low_memory=False ensures correct reading of large files.
         df = pd.read_csv(input_path, low_memory=False)
         
-        # Ensure all required columns are present in the DataFrame
         required_cols = [COLUMN_ASSET_NAME, COLUMN_SUBSCRIPTION, COLUMN_LOCATION_PATH, COLUMN_SEVERITY]
         if not all(col in df.columns for col in required_cols):
             missing_cols = [col for col in required_cols if col not in df.columns]
@@ -49,18 +69,17 @@ def triage_vulnerabilities(input_path, output_dir):
     df[COLUMN_SEVERITY] = df[COLUMN_SEVERITY].astype(str).str.title().fillna('None')
 
 
-    # Create the output directory if it doesn't exist
+    # Create the output directory 
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- 2. Define Category Filters (Boolean Logic) ---
+    # --- 3. Define Category Filters (Logic remains the same) ---
 
-    # 2A. Primary Split: Database (DB) vs. CI/CD Support (Non-DB)
+    # 3A. Primary Split: Database (DB) vs. CI/CD Support (Non-DB)
     df['is_db_asset'] = df[COLUMN_ASSET_NAME].str.contains('db|mongo', na=False)
-    
     db_assets = df[df['is_db_asset']]
     cicd_assets = df[~df['is_db_asset']] 
 
-    # 2B. Secondary Splits
+    # 3B. Secondary Splits
 
     # 1. DB PROD vs. DB NON-PROD (Based on SubscriptionName 'plat' for Platinum)
     db_prod_df = db_assets[db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', na=False)]
@@ -74,29 +93,32 @@ def triage_vulnerabilities(input_path, output_dir):
     cicd_dev_build_df = cicd_assets[is_dev_build]
     cicd_devops_tooling_df = cicd_assets[~is_dev_build]
 
-    # --- 3. Write to New Files and Generate Report ---
+    # --- 4. Write to New Files and Generate Report ---
 
-    category_data = {
-        'DB_Production_Vulnerabilities': db_prod_df,
-        'DB_NonProduction_Vulnerabilities': db_non_prod_df,
-        'CI_CD_DevBuild_Vulnerabilities': cicd_dev_build_df,
-        'CI_CD_DevOpsTooling_Vulnerabilities': cicd_devops_tooling_df
+    category_templates = {
+        'DB_Production': db_prod_df,
+        'DB_NonProduction': db_non_prod_df,
+        'CI_CD_DevBuild': cicd_dev_build_df,
+        'CI_CD_DevOpsTooling': cicd_devops_tooling_df
     }
     
     full_severity_report = {}
 
     print("\n--- Generating Categorized Excel Reports ---")
-    for category_name, df_slice in category_data.items():
-        # Get severity counts for the current category before writing the file
+    for category_base_name, df_slice in category_templates.items():
+        # Get severity counts 
         severity_counts = df_slice[COLUMN_SEVERITY].value_counts().reindex(['Critical', 'High', 'Medium', 'Low', 'None'], fill_value=0)
-        full_severity_report[category_name] = severity_counts.to_dict()
+        full_severity_report[category_base_name] = severity_counts.to_dict()
+        
+        # New Naming Convention: BaseName_Month.xlsx (e.g., DB_Production_Aug.xlsx)
+        month_suffix = f"_{month_shortcut}" if month_shortcut else ""
+        output_filename = f"{output_dir}/{category_base_name}{month_suffix}.xlsx"
         
         # Write the Excel file
-        output_filename = f"{output_dir}/{category_name}.xlsx"
         df_slice.to_excel(output_filename, index=False, engine='openpyxl')
         print(f"Created file: {output_filename} with {len(df_slice)} rows.")
     
-    # --- 4. Print Summary Report ---
+    # --- 5. Print Summary Report (remains the same) ---
 
     print("\n" + "="*50)
     print("      VULNERABILITY SEVERITY SUMMARY")
@@ -107,7 +129,6 @@ def triage_vulnerabilities(input_path, output_dir):
     print(f"{'Category':<35} | {'Critical':<10} | {'High':<10} | {'Medium':<10} | {'Low':<10} | {'None':<10}")
     print("-" * 100)
     
-    # Print data row by row, ensuring consistent formatting
     for category, counts in full_severity_report.items():
         total_for_category = sum(counts.values())
         print(f"{category:<35} | {counts.get('Critical', 0):<10} | {counts.get('High', 0):<10} | {counts.get('Medium', 0):<10} | {counts.get('Low', 0):<10} | {counts.get('None', 0):<10} (Total: {total_for_category})")
@@ -122,6 +143,5 @@ if __name__ == "__main__":
         print("Usage: python your_script_name.py <path/to/your/report.csv>")
         sys.exit(1)
         
-    # sys.argv[1] is the first argument passed after the script name
     input_file_path = sys.argv[1]
-    triage_vulnerabilities(input_file_path, OUTPUT_DIRECTORY)
+    triage_vulnerabilities(input_file_path, OUTPUT_BASE_DIRECTORY)
