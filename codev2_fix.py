@@ -4,8 +4,8 @@ import sys
 import re
 
 # --- Configuration ---
-# Output folder will be dynamically created: Triage_Vulnerability_Reports_<Month>
-OUTPUT_BASE_DIRECTORY = 'Triage_Vulnerability_Reports'
+# Output folder will be dynamically created: Vulnerability_Reports_<Month>
+OUTPUT_BASE_DIRECTORY = 'Vulnerability_Reports'
 
 # IMPORTANT: These column names must match the EXACT headers in your CSV.
 COLUMN_ASSET_NAME = 'AssetName'       
@@ -46,7 +46,7 @@ def triage_vulnerabilities(input_path, output_dir_base):
         output_dir = output_dir_base
         print("Warning: Could not detect month in filename. Using generic output folder.")
         
-    print(f"Starting triage for file: {input_path}")
+    print(f"Starting analysis for file: {input_path}")
     
     # 2. Read the Data (pd.read_csv with low_memory=False to suppress DtypeWarning)
     try:
@@ -119,12 +119,12 @@ def triage_vulnerabilities(input_path, output_dir_base):
         
         # Write the Excel file
         df_slice.to_excel(output_filename, index=False, engine='openpyxl')
-        print(f"✅ Created file: {output_filename} with {len(df_slice)} rows.")
+        print(f"Created file: {output_filename} with {len(df_slice)} rows.")
     
     # --- 5. Print Summary Report (remains the same) ---
 
     print("\n" + "="*50)
-    print("      VULNERABILITY TRIAGE AND SEVERITY SUMMARY")
+    print("      VULNERABILITY SEVERITY SUMMARY")
     print("="*50)
     print(f"Total Records Processed: {total_rows}\n")
 
