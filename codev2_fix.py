@@ -1,12 +1,14 @@
 import pandas as pd
 import os
+import sys
 
 # --- Configuration ---
-# NOTE: The input file name is now set to the confirmed CSV name
-INPUT_FILE = 'Report_Aug_10_2025_259_AM_2025_09_24T05_22_34Z (1).csv'
-OUTPUT_DIRECTORY = 'Triage_Vulnerability_Reports'
+# INPUT_FILE is now expected as the first command-line argument (sys.argv[1])
+# We only define the output directory and the column names (which should be static headers)
 
-# IMPORTANT: These column names must match the EXACT headers in your CSV.
+OUTPUT_DIRECTORY = 'Vulnerability_Reports'
+
+# IMPORTANT: These column names must match the EXACT headers in CSV.
 COLUMN_ASSET_NAME = 'AssetName'       
 COLUMN_SUBSCRIPTION = 'SubscriptionName' 
 COLUMN_LOCATION_PATH = 'LocationPath'  
@@ -15,15 +17,15 @@ COLUMN_SEVERITY = 'Severity'
 
 def triage_vulnerabilities(input_path, output_dir):
     """
-    Reads the full vulnerability list, categorizes it into four types, 
-    and generates separate Excel reports with a severity count summary.
+    Reads the full vulnerability list from a CSV file (given by input_path), 
+    categorizes it into four types, generates separate Excel reports, 
+    and prints a severity count summary.
     """
     print(f"Starting triage for file: {input_path}")
     
-    # 1. Read the Data (FIXED: pd.read_csv with low_memory=False)
+    # 1. Read the Data (FIXED: pd.read_csv with low_memory=False to suppress DtypeWarning)
     try:
-        # Use pd.read_csv for CSV files. Setting low_memory=False suppresses the DtypeWarning
-        # for large files with mixed data types, ensuring correct data loading.
+        # Use pd.read_csv for CSV files. low_memory=False ensures correct reading of large files.
         df = pd.read_csv(input_path, low_memory=False)
         
         # Ensure all required columns are present in the DataFrame
@@ -34,17 +36,16 @@ def triage_vulnerabilities(input_path, output_dir):
             return
             
     except FileNotFoundError:
-        print(f"ERROR: Input file not found at {input_path}")
+        print(f"ERROR: Input file not found at {input_path}. Please check the path and filename.")
         return
 
     total_rows = len(df)
     print(f"Successfully read {total_rows} total records.")
     
-    # Clean up NaN/missing values in key columns to prevent errors in boolean logic
+    # Clean up and normalize key columns
     df[COLUMN_ASSET_NAME] = df[COLUMN_ASSET_NAME].astype(str).str.lower().fillna('')
     df[COLUMN_SUBSCRIPTION] = df[COLUMN_SUBSCRIPTION].astype(str).str.lower().fillna('')
     df[COLUMN_LOCATION_PATH] = df[COLUMN_LOCATION_PATH].astype(str).str.lower().fillna('')
-    # Convert Severity to Title Case for consistent counting
     df[COLUMN_SEVERITY] = df[COLUMN_SEVERITY].astype(str).str.title().fillna('None')
 
 
@@ -54,25 +55,20 @@ def triage_vulnerabilities(input_path, output_dir):
     # --- 2. Define Category Filters (Boolean Logic) ---
 
     # 2A. Primary Split: Database (DB) vs. CI/CD Support (Non-DB)
-    # Assumes any AssetName containing 'db' or 'mongo' is a DB asset.
     df['is_db_asset'] = df[COLUMN_ASSET_NAME].str.contains('db|mongo', na=False)
     
     db_assets = df[df['is_db_asset']]
     cicd_assets = df[~df['is_db_asset']] 
 
-    # --- 2B. Secondary Splits (Specific Triage Categories) ---
+    # 2B. Secondary Splits
 
-    # 1. DB PROD vs. DB NON-PROD
-    # Prod = SubscriptionName contains 'plat' (Platinum)
-    # Non-Prod = Everything else (Gold/Silver)
+    # 1. DB PROD vs. DB NON-PROD (Based on SubscriptionName 'plat' for Platinum)
     db_prod_df = db_assets[db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', na=False)]
     db_non_prod_df = db_assets[~db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', na=False)]
 
     # 2. CI/CD DEV BUILD vs. CI/CD DEVOPS TOOLING
-    # Dev Build = LocationPath contains '.m2' (Maven repo) or 'xml' (config file)
+    # Dev Build = LocationPath contains '.m2' (Maven) or 'xml' (config)
     dev_path_keywords = ['.m2', 'xml'] 
-    
-    # Create a boolean series: True if the path contains ANY of the dev keywords
     is_dev_build = cicd_assets[COLUMN_LOCATION_PATH].apply(lambda x: any(keyword in x for keyword in dev_path_keywords))
     
     cicd_dev_build_df = cicd_assets[is_dev_build]
@@ -98,12 +94,12 @@ def triage_vulnerabilities(input_path, output_dir):
         # Write the Excel file
         output_filename = f"{output_dir}/{category_name}.xlsx"
         df_slice.to_excel(output_filename, index=False, engine='openpyxl')
-        print(f"✅ Created file: {output_filename} with {len(df_slice)} rows.")
+        print(f"Created file: {output_filename} with {len(df_slice)} rows.")
     
     # --- 4. Print Summary Report ---
 
     print("\n" + "="*50)
-    print("      VULNERABILITY TRIAGE AND SEVERITY SUMMARY")
+    print("      VULNERABILITY SEVERITY SUMMARY")
     print("="*50)
     print(f"Total Records Processed: {total_rows}\n")
 
@@ -119,6 +115,13 @@ def triage_vulnerabilities(input_path, output_dir):
     print("="*50)
 
 
-# --- Execute the script ---
+# --- Execution Block: Reads the Argument ---
 if __name__ == "__main__":
-    triage_vulnerabilities(INPUT_FILE, OUTPUT_DIRECTORY)
+    if len(sys.argv) < 2:
+        print("\nERROR: Missing input file path.")
+        print("Usage: python your_script_name.py <path/to/your/report.csv>")
+        sys.exit(1)
+        
+    # sys.argv[1] is the first argument passed after the script name
+    input_file_path = sys.argv[1]
+    triage_vulnerabilities(input_file_path, OUTPUT_DIRECTORY)
