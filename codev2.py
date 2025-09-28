@@ -4,7 +4,7 @@ import re
 import sys
 
 # --- Configuration ---
-OUTPUT_DIRECTORY = 'Triage_Vulnerability_Reports'
+OUTPUT_DIRECTORY = 'Vulnerability_Reports'
 
 # Confirmed Column Headers (based on I, Q, Y, AT positions)
 COLUMN_SEVERITY = 'Severity'
