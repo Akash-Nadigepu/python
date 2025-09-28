@@ -14,19 +14,22 @@ COLUMN_LOCATION_PATH = 'LocationPath'
 COLUMN_SEVERITY = 'Severity'         
 # ---------------------
 
-def extract_month_shortcut(filename):
+def extract_month_shortcut(filename_or_path):
     """
-    Extracts a 3-letter month shortcut (e.g., 'Aug') from the filename 
-    by specifically looking for an abbreviation followed by a number (day), 
-    and returns it in title case, or None if not found.
+    Extracts a 3-letter month shortcut (e.g., 'Aug') by looking for known month 
+    abbreviations anywhere in the string. This is the most permissive fix for OS masking issues.
     """
-    # CORRECTED REGEX: Looks for an underscore/start of string, followed by a 3-letter month (A-Z),
-    # and then immediately followed by a digit (the day). This targets the 'Aug_10' pattern.
-    # The '([_])([A-Za-z]{3})\d+' ensures we capture the month abbreviation right before a number (the day).
-    month_match = re.search(r'([_])([A-Za-z]{3})\d+', filename, re.IGNORECASE)
+    # List of all standard 3-letter month abbreviations
+    month_abbreviations = r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+    
+    # New Permissive Regex: Looks for a month abbreviation (case-insensitive)
+    # The '([A-Za-z]+)' part captures the full word, and we specifically look for the 
+    # 3-letter shortcut in the list of standard abbreviations.
+    month_match = re.search(month_abbreviations, filename_or_path, re.IGNORECASE)
+    
     if month_match:
-        # Returns the three-letter segment found in group 2
-        return month_match.group(2).title()
+        # Returns the found month shortcut in Title Case (e.g., 'Aug')
+        return month_match.group(1).title()
     return None
 
 def triage_vulnerabilities(input_path, output_dir_base):
@@ -36,8 +39,9 @@ def triage_vulnerabilities(input_path, output_dir_base):
     and prints a severity count summary.
     """
     # 1. Dynamic Month Extraction and Output Setup
-    filename = os.path.basename(input_path)
-    month_shortcut = extract_month_shortcut(filename)
+    # Pass the entire input_path to the extractor for the best chance of finding the month
+    filename_for_search = os.path.basename(input_path)
+    month_shortcut = extract_month_shortcut(filename_for_search)
     
     if month_shortcut:
         output_dir = f"{output_dir_base}_{month_shortcut}"
@@ -77,19 +81,13 @@ def triage_vulnerabilities(input_path, output_dir_base):
 
     # --- 3. Define Category Filters (Logic remains the same) ---
 
-    # 3A. Primary Split: Database (DB) vs. CI/CD Support (Non-DB)
     df['is_db_asset'] = df[COLUMN_ASSET_NAME].str.contains('db|mongo', na=False)
     db_assets = df[df['is_db_asset']]
     cicd_assets = df[~df['is_db_asset']] 
 
-    # 3B. Secondary Splits
-
-    # 1. DB PROD vs. DB NON-PROD (Based on SubscriptionName 'plat' for Platinum)
     db_prod_df = db_assets[db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', na=False)]
     db_non_prod_df = db_assets[~db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', na=False)]
 
-    # 2. CI/CD DEV BUILD vs. CI/CD DEVOPS TOOLING
-    # Dev Build = LocationPath contains '.m2' (Maven) or 'xml' (config)
     dev_path_keywords = ['.m2', 'xml'] 
     is_dev_build = cicd_assets[COLUMN_LOCATION_PATH].apply(lambda x: any(keyword in x for keyword in dev_path_keywords))
     
@@ -109,7 +107,6 @@ def triage_vulnerabilities(input_path, output_dir_base):
 
     print("\n--- Generating Categorized Excel Reports ---")
     for category_base_name, df_slice in category_templates.items():
-        # Get severity counts 
         severity_counts = df_slice[COLUMN_SEVERITY].value_counts().reindex(['Critical', 'High', 'Medium', 'Low', 'None'], fill_value=0)
         full_severity_report[category_base_name] = severity_counts.to_dict()
         
