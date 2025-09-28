@@ -1,78 +1,79 @@
 import pandas as pd
 import os
-import re
 import sys
 
 # --- Configuration ---
+# NOTE: We now get the INPUT_FILE path from the command line argument (sys.argv[1])
+# Default fallback name (if needed for testing, but should be overridden by argument)
+# INPUT_FILE = 'vulnerability_list.csv' 
 OUTPUT_DIRECTORY = 'Vulnerability_Reports'
 
-# Confirmed Column Headers (based on I, Q, Y, AT positions)
-COLUMN_SEVERITY = 'Severity'
-COLUMN_LOCATION_PATH = 'LocationPath'
-COLUMN_ASSET_NAME = 'AssetName'
-COLUMN_SUBSCRIPTION = 'SubscriptionName'
-COLUMNS_TO_USE = [COLUMN_SEVERITY, COLUMN_LOCATION_PATH, COLUMN_ASSET_NAME, COLUMN_SUBSCRIPTION]
+# IMPORTANT: Replace these generic names with the *actual* column headers from your Excel file.
+# Based on your previous context:
+COLUMN_ASSET_NAME = 'AssetName'       # Column Y, used for DB vs CI/CD split
+COLUMN_SUBSCRIPTION = 'SubscriptionName' # Column AT, used for Prod vs Non-Prod split
+COLUMN_LOCATION_PATH = 'LocationPath'  # Column Q, used for Dev vs DevOps split
+COLUMN_SEVERITY = 'Severity'         # Column I, used for final count report
 # ---------------------
 
 def triage_vulnerabilities(input_path, output_dir):
     """
-    Reads the full vulnerability list from the input file path, 
-    categorizes it into four types, and generates separate CSV reports 
-    with a severity count summary printed to the console.
+    Reads the full vulnerability list (CSV format assumed), categorizes it into four types, 
+    and generates separate Excel reports with a severity count summary.
     """
     print(f"Starting triage for file: {input_path}")
     
-    # 1. Read the Data (Using column names and low_memory=False to handle DtypeWarning/size)
+    # 1. Read the Data (Updated to read CSV)
     try:
-        df = pd.read_csv(
-            input_path, 
-            usecols=COLUMNS_TO_USE, 
-            low_memory=False, 
-            encoding='utf-8' 
-        )
+        # Use pd.read_csv for CSV files. Assuming headers are present.
+        df = pd.read_csv(input_path)
+        
+        # Ensure all required columns are present
+        required_cols = [COLUMN_ASSET_NAME, COLUMN_SUBSCRIPTION, COLUMN_LOCATION_PATH, COLUMN_SEVERITY]
+        if not all(col in df.columns for col in required_cols):
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            print(f"ERROR: Missing required columns in the CSV file: {missing_cols}")
+            return
             
     except FileNotFoundError:
-        print(f"ERROR: Input file not found at '{input_path}'. Please check the path and filename.")
-        return
-    except ValueError as e:
-        # This error typically means a column name was misspelled or the header changed.
-        print(f"ERROR reading file: One or more required column headers were not found.")
-        print(f"Please confirm the file contains: {', '.join(COLUMNS_TO_USE)}")
-        print(f"Details: {e}")
+        print(f"ERROR: Input file not found at {input_path}")
         return
     except Exception as e:
-        print(f"An unexpected error occurred during file reading: {e}")
+        print(f"An unexpected error occurred while reading the file: {e}")
         return
 
     total_rows = len(df)
     print(f"Successfully read {total_rows} total records.")
     
-    # --- Data Cleaning and Normalization ---
-    df[COLUMN_ASSET_NAME] = df[COLUMN_ASSET_NAME].fillna('').astype(str)
-    df[COLUMN_SUBSCRIPTION] = df[COLUMN_SUBSCRIPTION].fillna('').astype(str)
-    df[COLUMN_LOCATION_PATH] = df[COLUMN_LOCATION_PATH].fillna('').astype(str)
-    # Standardize Severity column
-    df[COLUMN_SEVERITY] = df[COLUMN_SEVERITY].fillna('None').astype(str).str.title()
-    
+    # Data Cleaning and Preparation (as before)
+    df[COLUMN_ASSET_NAME] = df[COLUMN_ASSET_NAME].fillna('')
+    df[COLUMN_SUBSCRIPTION] = df[COLUMN_SUBSCRIPTION].fillna('')
+    df[COLUMN_LOCATION_PATH] = df[COLUMN_LOCATION_PATH].fillna('')
+
+    # Create the output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- 2. Define Category Filters (Triage Logic) ---
+    # --- 2. Define Category Filters (Boolean Logic) ---
 
     # 2A. Primary Split: Database (DB) vs. CI/CD Support (Non-DB)
-    is_db_asset = df[COLUMN_ASSET_NAME].str.contains('db|mongo', case=False)
-    db_assets = df[is_db_asset].copy()
-    cicd_assets = df[~is_db_asset].copy()
+    df['is_db_asset'] = df[COLUMN_ASSET_NAME].str.contains('db|mongo', case=False, na=False)
+    db_assets = df[df['is_db_asset']]
+    cicd_assets = df[~df['is_db_asset']]
 
-    # 1. DB PROD vs. NON-PROD: Prod = 'plat' (Platinum)
-    is_prod_sub = db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', case=False)
-    db_prod_df = db_assets[is_prod_sub]
-    db_non_prod_df = db_assets[~is_prod_sub]
+    # --- 2B. Secondary Splits ---
 
-    # 2. CI/CD DEV BUILD vs. DEVOPS TOOLING: Dev Build = '.m2' OR 'xml' in LocationPath
-    # These paths indicate application dependencies/config (Dev Team focus)
-    dev_build_mask = cicd_assets[COLUMN_LOCATION_PATH].str.contains(r'\.m2|xml', regex=True, case=False)
-    cicd_dev_build_df = cicd_assets[dev_build_mask]
-    cicd_devops_tooling_df = cicd_assets[~dev_build_mask] # Base OS/Agents (DevOps/SRE Team focus)
+    # 1. DB PROD vs. DB NON-PROD
+    # Prod = Platinum ('plat'), Non-Prod = everything else (Gold/Silver)
+    db_prod_df = db_assets[db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', case=False, na=False)]
+    db_non_prod_df = db_assets[~db_assets[COLUMN_SUBSCRIPTION].str.contains('plat', case=False, na=False)]
+
+    # 2. CI/CD DEV BUILD vs. CI/CD DEVOPS TOOLING
+    # Dev Build = LocationPath contains '.m2' or 'xml'
+    dev_path_keywords = ['.m2', 'xml'] 
+    is_dev_build = cicd_assets[COLUMN_LOCATION_PATH].apply(lambda x: any(keyword in x for keyword in dev_path_keywords))
+    
+    cicd_dev_build_df = cicd_assets[is_dev_build]
+    cicd_devops_tooling_df = cicd_assets[~is_dev_build]
 
     # --- 3. Write to New Files and Generate Report ---
 
@@ -83,39 +84,55 @@ def triage_vulnerabilities(input_path, output_dir):
         'CI_CD_DevOpsTooling_Vulnerabilities': cicd_devops_tooling_df
     }
     
-    severity_order = ['Critical', 'High', 'Medium', 'Low', 'None']
+    full_severity_report = {}
+
+    print("\n--- Generating Categorized Excel Reports ---")
+    for category_name, df_slice in category_data.items():
+        # Get severity counts for the current category 
+        severity_counts = df_slice[COLUMN_SEVERITY].value_counts().reindex(['Critical', 'High', 'Medium', 'Low', 'None'], fill_value=0)
+        full_severity_report[category_name] = severity_counts.to_dict()
+        
+        # Write the Excel file (using 'openpyxl' engine to write to .xlsx)
+        output_filename = f"{output_dir}/{category_name}.xlsx"
+        df_slice.to_excel(output_filename, index=False, engine='openpyxl')
+        print(f"✅ Created file: {output_filename} with {len(df_slice)} rows.")
     
+    # --- 4. Print Summary Report ---
+
     print("\n" + "="*50)
     print("      VULNERABILITY TRIAGE AND SEVERITY SUMMARY")
     print("="*50)
-    print(f"{'Category':<35} | {'Critical':<10} | {'High':<10} | {'Medium':<10} | {'Low':<10} | {'None':<10} | {'Total':<10}")
-    print("-" * 110)
+    print(f"Total Records Processed: {total_rows}\n")
 
-    for category_name, df_slice in category_data.items():
-        # Calculate severity counts
-        severity_counts = df_slice[COLUMN_SEVERITY].value_counts().reindex(severity_order, fill_value=0)
-        
-        # Prepare data for printing
-        counts = severity_counts.to_dict()
+    # Format and print the consolidated report
+    print(f"{'Category':<35} | {'Critical':<10} | {'High':<10} | {'Medium':<10} | {'Low':<10} | {'None':<10}")
+    print("-" * 100)
+    
+    # Print data row by row, ensuring consistent formatting
+    for category, counts in full_severity_report.items():
         total_for_category = sum(counts.values())
+        print(f"{category:<35} | {counts.get('Critical', 0):<10} | {counts.get('High', 0):<10} | {counts.get('Medium', 0):<10} | {counts.get('Low', 0):<10} | {counts.get('None', 0):<10} (Total: {total_for_category})")
         
-        # Print the severity counts to the console in the required neat format
-        print(f"{category_name:<35} | {counts.get('Critical', 0):<10} | {counts.get('High', 0):<10} | {counts.get('Medium', 0):<10} | {counts.get('Low', 0):<10} | {counts.get('None', 0):<10} | {total_for_category:<10}")
+    print("="*50)
 
-        # Write the file (Outputting as CSV)
-        output_filename = f"{output_dir}/{category_name}.csv"
-        df_slice[COLUMNS_TO_USE].to_csv(output_filename, index=False, encoding='utf-8')
-        
-    print("-" * 110)
-    print("\n✅ Processing complete. All categorized files are saved in the 'Triage_Vulnerability_Reports' directory as CSV.")
-
-# --- Execute the script, reading the argument from the command line ---
+# --- Execute the script using command-line arguments ---
 if __name__ == "__main__":
+    # Check if a filename was provided as an argument
     if len(sys.argv) < 2:
-        print("Usage: python <script_name.py> <input_file.csv>")
-        print("Example: python triage_script.py wizreport.csv")
+        print("\nERROR: Please provide the input CSV filename as a command-line argument.")
+        print("Usage: python vuln_analysis.py <input_filename.csv>")
         sys.exit(1)
         
-    # sys.argv[1] is the first argument after the script name
-    input_file_path = sys.argv[1]
-    triage_vulnerabilities(input_file_path, OUTPUT_DIRECTORY)
+    # sys.argv[0] is the script name; sys.argv[1] is the first argument (the filename)
+    input_filename = sys.argv[1]
+    
+    # Ensure necessary libraries are installed
+    try:
+        import pandas as pd
+        import openpyxl # Used by pandas to write .xlsx output
+    except ImportError:
+        print("\nERROR: Required libraries (pandas and openpyxl) are not installed.")
+        print("Please run: pip install pandas openpyxl")
+        sys.exit(1)
+
+    triage_vulnerabilities(input_filename, OUTPUT_DIRECTORY)
