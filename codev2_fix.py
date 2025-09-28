@@ -99,7 +99,7 @@ def triage_vulnerabilities(input_path, output_dir_base):
     category_templates = {
         'DB_Production': db_prod_df,
         'DB_NonProduction': db_non_prod_df,
-        'CI_CD_DevBuild': cicd_dev_build_df,
+        'Dev_App_Dependencies': cicd_dev_build_df,
         'CI_CD_DevOpsTooling': cicd_devops_tooling_df
     }
     
