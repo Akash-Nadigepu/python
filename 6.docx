@@ -1,0 +1,86 @@
+Helm in the CI/CD Pipeline
+Helm is the package manager for Kubernetes (and by extension, OpenShift). It uses standardized charts (templates) to define, install, and manage Kubernetes resources.
+
+A. The Deployment Process Flow
+The team uses a "build once, deploy many" architecture, meaning the artifact is built only once and promoted across environments.
+
+
+Trigger: A deployment is triggered manually from the Bamboo Deployment Plan.
+
+
+Execution: The deployment task runs a Python script (deploychannel.py) on the Bamboo agent.
+
+
+Helm Invocation: The Python script's main job is to fire the Helm command using arguments like application name, environment, and build number.
+
+
+Manifest Generation: The Helm command reads the appropriate charts and environment files, replacing placeholders to generate the final set of OpenShift manifest files (.yaml—Deployment, HPA, Route, etc.).
+
+
+
+Application: The script then uses the OpenShift CLI (oc apply) command to apply these generated manifests to the corresponding OpenShift namespace.
+
+
+Promotion: Once a build is verified in the QA/SIT environment, the exact same build release number is promoted to UAT and Production without being rebuilt.
+
+2. Helm Chart Structure and Templates
+Your team's Helm setup is structured to support common changes efficiently and manage environment-specific variables.
+
+A. Template Files (The Skeletal Structure)
+
+Purpose: Templates (like dc_yaml_under_DC.yaml within the libraries directory) provide a skeletal structure for the Kubernetes resource (e.g., a Deployment Config).
+
+
+
+Content: These files contain placeholders ({{ $.Values.minReplicas }}) that are replaced by actual values during runtime when the Helm command is executed.
+
+
+
+Efficiency: Because services are segregated by technology stack (e.g., all Node.js services use one template, all Java services use another), a common change (like enabling HTTPS for all Node.js services) only requires modifying one central template file.
+
+
+B. Configuration Files (The Values)
+Configuration values that populate the templates are organized hierarchically:
+
+Global Defaults: Applied to all services and all tech stacks. (Found in files like ocp4-dev.yaml ).
+
+Tech Stack Defaults: Applied only to services within a specific technology (e.g., the node.js section or the python section defines defaults for all services using that runtime).
+
+Service-Specific Overrides: These are custom configurations or specific Java options that apply to only one service (e.g., the access-control-service section) .
+
+3. Deployment Configuration Details
+The deployment configuration ties together application configuration (SCCS), security (secrets), and runtime settings.
+
+A. Passing Runtime Arguments
+When deploying a Java service, key runtime arguments are passed using placeholders in the Helm templates which are populated by environment files:
+
+
+SPRING_CLOUD_CONFIG_URI: This is the critical variable pointing the service to the correct Spring Cloud Config Server URL for the environment.
+
+
+JAVA_OPTS: Used to pass JVM arguments, including instrumentation for tools like Datadog (for observability) and, importantly, certificate/keystore paths.
+
+
+B. Secure Certificate Handling (Externalized Trust)
+For secure communication to external endpoints (SSL enabled):
+
+Certificates are stored as an OpenShift Secret.
+
+This Secret is mounted to a specific, internal file path in the application Pod.
+
+
+The JAVA_OPTS argument is used to tell the JVM where this externalized trust store file is located (-Djavax.net.ssl.trustStore=...).
+
+This pattern ensures that certificates can be updated by simply updating the Secret and restarting the Pod, without touching the application code or the container image.
+
+
+4. Multi-Container Pods and Logging
+All microservices run as multi-container Pods. This means that alongside the main application container, there are specialized sidecar containers:
+
+
+Logging Sidecar: Contains a utility like rsyslog , which listens to the application's local log folder, adds additional information, and forwards the data to a FluentD container. FluentD then sends the logs to Splunk and S3.
+
+
+
+
+Vault Container: If the application requires direct runtime secret injection, a Vault sidecar may also be present.
