@@ -1,0 +1,28 @@
+OpenShift Environment Overview
+OpenShift is Red Hat's enterprise version of Kubernetes, specifically implemented here as ROSA (Red Hat OpenShift Service on AWS).
+A. Cluster Access and Compliance
+•	Access Method: Logging into the cluster requires a Service Account (SA) credential, as this is the standard compliance practice. This ensures that human access is tied to auditable service roles. * User Experience: While Kubernetes is the foundation, OpenShift provides a more UI-rich experience (Web Console) for easier cluster management.
+•	Access Scope: As application teams, your access is restricted to the specific namespaces you manage. You can perform any action (create/delete Deployments, Services, Secrets, etc.) inside your assigned namespace, but nothing outside it. This is application-level access control.
+B. Namespaces and Environments
+The EDEPT team works primarily across four cluster environments, with distinct namespaces for segmentation:
+•	MP1: Houses broker-portal-dev and broker-portal-sit.
+•	MP2: Houses broker-portal-uat and broker-portal-uat2.
+•	Prod: primary prod namespaces.
+•	DR: DR namespace
+•	Network Policy: Currently, communication between namespaces is restricted by network policy.
+________________________________________
+2. Java Microservice Deployment (Runtime Configuration)
+When deploying a Java Spring Boot microservice to OpenShift, specific runtime arguments and configurations must be passed to the container. These are typically managed via Environment Variables within the deployment object.
+A. Key Runtime Variables
+Environment Variable	Example Value	Purpose
+JAVA_OPTS	-javaagent:dd-java-agent.jar -Ddd.trace.agent.port=...	Provides Java arguments for the JVM, often including instrumentation necessary for monitoring tools like Datadog.
+SPRING_PROFILES_ACTIVE	qa, openshift.qaredis	Tells the Spring Boot application which configuration profile to use when fetching properties.
+SPRING_CLOUD_CONFIG_URI	https://services-broker.qa.anthem.com/config-server/	Specifies the URL of the Spring Cloud Config Server instance from which the microservice must pull its configuration properties.
+[DD_AGENT_HOST, etc.]		Additional fields required for Datadog instrumentation and correlation.
+B. Secure External Communication (Certificates)
+To communicate with any external SSL-enabled endpoint (e.g., an external API or third-party service), the Java microservice must trust the endpoint's certificate.
+1.	Trust Store Requirement: The Java standard requires the external certificate to be placed in a Java Key Store (JKS), commonly referred to as a Trust Store, so the application can read and trust the cert.
+2.	SRE Pattern (Externalization): We do not rely on the default Java Key Store of the base image. Instead, the key store file is externalized and maintained as an OpenShift Secret.
+3.	Deployment Flow: The secret (containing the trust store file) is mounted to a specific folder path inside the application Pod.
+4.	Java Argument: The JAVA_OPTS arguments are used to pass the path of this mounted key store to the application (e.g., pointing to the broker-trust-store).
+5.	Certificate Update: If an external certificate needs an update, the SRE team modifies the Secret (downloading the existing key store, installing the new cert via keytool command, deleting the old secret, and uploading the new one) and then restarts the Pod. This pattern is consistent across all Java applications in the tower.
