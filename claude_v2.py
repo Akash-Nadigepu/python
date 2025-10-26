@@ -64,19 +64,24 @@ class WizReportAnalyzer:
         })
         
         # First level filtration: Check if AssetName contains "bamboo" (case-insensitive)
-        bamboo_mask = self.df['AssetName'].str.lower().str.contains('bamboo', na=False)
+        bamboo_mask = self.df['AssetName'].str.lower().str.contains('bamboo', na=False, regex=False)
         
         # Second level filtration for bamboo assets: Check LocationPath
         dev_mask = bamboo_mask & (
-            self.df['LocationPath'].str.contains('.m2', na=False) |
-            self.df['LocationPath'].str.contains('xml-data', na=False)
+            self.df['LocationPath'].str.contains('.m2', na=False, regex=False) |
+            self.df['LocationPath'].str.contains('xml-data', na=False, regex=False)
         )
         
         sre_mask = bamboo_mask & ~dev_mask
         
-        # DB Team: exclude bamboo AND exclude tableau assets
-        tableau_mask = self.df['AssetName'].str.lower().str.contains('tableau', na=False)
+        # DB Team: exclude bamboo AND exclude tableau assets (case-insensitive)
+        tableau_mask = self.df['AssetName'].str.lower().str.contains('tableau', na=False, regex=False)
         db_mask = ~bamboo_mask & ~tableau_mask
+        
+        # Debug: Print tableau asset count
+        tableau_count = tableau_mask.sum()
+        if tableau_count > 0:
+            print(f"ℹ️  Excluded {tableau_count} Tableau assets from DB Team")
         
         # Split dataframes
         self.dev_team_df = self.df[dev_mask].copy()
@@ -189,12 +194,14 @@ class WizReportAnalyzer:
         months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
         
-        filename = self.input_file.stem
+        # Get the full filename including path
+        filename = str(self.input_file)
         
-        # Search for exact month pattern in filename using regex word boundaries
+        # Search for month pattern anywhere in the filename (case-insensitive)
         for month in months:
-            # Match month as a whole word (case-insensitive)
-            if re.search(r'\b' + month + r'\b', filename, re.IGNORECASE):
+            # Use case-insensitive search
+            pattern = re.compile(month, re.IGNORECASE)
+            if pattern.search(filename):
                 return month
         
         return None
