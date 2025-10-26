@@ -1,125 +1,133 @@
 import pandas as pd
-import os
 import sys
+import os
 
-# --- Configuration (File Names for Output) ---
-DEV_TEAM_FILE = "dev_team_report.xlsx"
-SRE_TEAM_FILE = "sre_team_report.xlsx"
-DATABASE_TEAM_FILE = "database_team_report.xlsx"
+# --- Constants for assumed column names ---
+# NOTE: The script assumes your CSV file has the following headers
+# based on the column letters provided (J, Q, Y). Adjust these
+# if your actual header names are different.
+COL_SEVERITY = 'Vendor Severity' # Column J
+COL_LOCATION = 'Location Path'   # Column Q
+COL_ASSET_NAME = 'Asset Name'     # Column Y
 
-def analyze_and_filter_report(input_csv):
+def process_wiz_report(file_path):
     """
-    Loads the Wiz report, applies filtering logic to assign teams, 
-    generates three separate Excel reports, and prints severity counts.
+    Loads a Wiz report CSV, filters it into three teams (Dev, SRE, DB),
+    generates separate Excel files, and prints a severity summary.
     """
-    if not os.path.exists(input_csv):
-        print(f"Error: Input file not found at '{input_csv}'")
-        return
+    print(f"--- Starting Report Processing for: {file_path} ---")
 
-    print(f"--- 1. Loading Data from {input_csv} ---")
-    
-    # Load data
+    # 1. Load Data and Initial Error Handling
     try:
-        df = pd.read_csv(input_csv)
+        # Read the CSV file
+        df = pd.read_csv(file_path)
+    except FileNotFoundError:
+        print(f"\nERROR: Input file not found at path: {file_path}")
+        return
     except Exception as e:
-        print(f"Error reading CSV file: {e}")
+        print(f"\nERROR: Failed to read CSV file. Check if it is a valid CSV format.")
+        print(f"Details: {e}")
         return
-    
-    # Clean column names by stripping leading/trailing whitespace
-    df.columns = df.columns.str.strip()
-    
-    # Define the core columns needed (assuming case-sensitivity after stripping)
-    ASSET_NAME_COL = 'AssetName'
-    LOCATION_PATH_COL = 'LocationPath'
-    VENDOR_SEVERITY_COL = 'VendorSeverity'
-    
-    # Ensure key columns exist before proceeding
-    required_cols = [ASSET_NAME_COL, LOCATION_PATH_COL, VENDOR_SEVERITY_COL]
+
+    # Check for mandatory columns
+    required_cols = [COL_SEVERITY, COL_LOCATION, COL_ASSET_NAME]
     if not all(col in df.columns for col in required_cols):
-        print("Error: Missing one or more required columns ('AssetName', 'LocationPath', 'VendorSeverity'). Please check the CSV header.")
+        print(f"\nERROR: The CSV file is missing one or more required columns.")
+        print(f"Expected columns (based on assumed headers): {required_cols}")
+        print(f"Available columns: {list(df.columns)}")
         return
 
-    
-    print("--- 2. Applying Filtering Logic and Team Assignment ---")
-    
-    # --- Step 1: Default Assignment (Database Team) ---
-    df['Team'] = 'Database Team'
-    
-    # --- Step 2: Identify Bamboo Assets (Track for Dev/SRE) ---
-    # Case=False for case-insensitive matching in AssetName
-    bamboo_assets = df[ASSET_NAME_COL].str.contains('bamboo', case=False, na=False)
-    
-    # --- Step 3: Second Level Filter (Dev vs SRE) ---
-    # Condition for Dev Team: LocationPath contains '.m2' OR 'xml-data'
-    # Use str.contains with regex=True for '.m2' to treat '.' literally
-    dev_path_condition = (
-        df[LOCATION_PATH_COL].astype(str).str.contains(r'\.m2', regex=True, case=False) |
-        df[LOCATION_PATH_COL].astype(str).str.contains('xml-data', case=False)
-    )
-    
-    # --- Step 4: Assign Dev Team ---
-    # Records must be bamboo_assets AND meet the dev_path_condition
-    df.loc[bamboo_assets & dev_path_condition, 'Team'] = 'Dev Team'
-    
-    # --- Step 5: Assign SRE Team ---
-    # Records must be bamboo_assets AND NOT meet the dev_path_condition
-    df.loc[bamboo_assets & (~dev_path_condition), 'Team'] = 'SRE Team'
-    
-    print(f"Total Records Processed: {len(df)}")
-    print("Team Distribution:")
-    print(df['Team'].value_counts())
-    
-    
-    print("\n--- 3. Generating Excel Reports ---")
-    
-    # Filter DataFrames for each team
-    # Drop the temporary 'Team' column before exporting
-    df_dev = df[df['Team'] == 'Dev Team'].drop(columns=['Team'])
-    df_sre = df[df['Team'] == 'SRE Team'].drop(columns=['Team'])
-    df_database = df[df['Team'] == 'Database Team'].drop(columns=['Team'])
+    total_records = len(df)
+    print(f"Successfully loaded {total_records} total records.")
+    print("-" * 50)
 
-    # Save to Excel files
-    df_dev.to_excel(DEV_TEAM_FILE, index=False)
-    print(f"Generated {DEV_TEAM_FILE} with {len(df_dev)} records.")
-    
-    df_sre.to_excel(SRE_TEAM_FILE, index=False)
-    print(f"Generated {SRE_TEAM_FILE} with {len(df_sre)} records.")
-    
-    df_database.to_excel(DATABASE_TEAM_FILE, index=False)
-    print(f"Generated {DATABASE_TEAM_FILE} with {len(df_database)} records.")
 
-    
-    print("\n--- 4. Severity Count Report (VendorSeverity) ---")
-    
-    # Calculate counts by VendorSeverity (case-insensitive)
-    severity_counts = df[VENDOR_SEVERITY_COL].astype(str).str.lower().value_counts().rename('Count')
-    
-    # Define the required order and categories
-    required_severities = ['critical', 'high', 'medium', 'low', 'none']
-    
-    # Create a Series with the required index, filling missing values with 0
-    severity_report = pd.Series(0, index=required_severities, name='Count').add(severity_counts, fill_value=0).astype(int)
-    
-    # Print the report
-    print("Vulnerability Count by Vendor Severity (All Teams):")
-    print("-" * 40)
-    for severity, count in severity_report.items():
-        # Capitalize for cleaner output
-        print(f"{severity.capitalize():<10}: {count:>8}")
-        
-    print("-" * 40)
-    print(f"Total Records: {len(df):>10}")
-    print("-" * 40)
+    # 2. Filtering and Segmentation Logic
 
-if __name__ == '__main__':
-    # Check if the input file path was provided as a command-line argument
-    if len(sys.argv) < 2:
-        print("Error: Please provide the input CSV file path as a command-line argument.")
-        print('Example usage: python wiz_report_analyzer.py "wiz report.xlsx - Sheet1.csv"')
+    # --- LEVEL 1: DB Team vs. Dev/SRE Pool ---
+    # DB Team: Asset Name (Y) does NOT contain 'bamboo' (case-insensitive)
+    df_db_team = df[~df[COL_ASSET_NAME].str.contains('bamboo', case=False, na=False)].copy()
+    
+    # Dev/SRE Pool: Asset Name (Y) DOES contain 'bamboo'
+    df_dev_sre_pool = df[df[COL_ASSET_NAME].str.contains('bamboo', case=False, na=False)].copy()
+
+
+    # --- LEVEL 2: Dev Team vs. SRE Team (within the Dev/SRE Pool) ---
+    
+    # Dev Team: Location Path (Q) contains '.m2' OR 'xml-data' (case-insensitive)
+    dev_filter = df_dev_sre_pool[COL_LOCATION].str.contains('.m2|xml-data', case=False, na=False)
+    df_dev_team = df_dev_sre_pool[dev_filter].copy()
+
+    # SRE Team: The remainder of the Dev/SRE Pool
+    df_sre_team = df_dev_sre_pool[~dev_filter].copy()
+    
+    
+    # 3. Output Generation (Excel Files)
+    
+    output_files = {
+        'DB Team': ('db_team.xlsx', df_db_team),
+        'Dev Team': ('dev_team.xlsx', df_dev_team),
+        'SRE Team': ('sre_team.xlsx', df_sre_team)
+    }
+
+    print("Generating Excel output files...")
+    for team_name, (file_name, team_df) in output_files.items():
+        try:
+            team_df.to_excel(file_name, index=False)
+            print(f"  - {team_name} report saved to '{file_name}' ({len(team_df)} records)")
+        except Exception as e:
+            print(f"  - ERROR: Failed to write {team_name} report to {file_name}. Details: {e}")
+
+    print("-" * 50)
+    
+    
+    # 4. Console Reporting (Severity Count)
+
+    print("Severity Count Report (from original dataset):")
+    
+    # Standardize severity names and fill missing with 'None'
+    severity_map = {
+        'Critical': 'Critical',
+        'High': 'High',
+        'Medium': 'Medium',
+        'Low': 'Low',
+        # Handles cases where 'None' might be represented differently or is blank
+        'N/A': 'None',
+        'Informational': 'None' 
+    }
+    
+    # Apply standardization and count
+    severity_counts = df[COL_SEVERITY].astype(str).str.strip().replace(severity_map, regex=True).value_counts()
+    
+    # Ensure all required severity levels are present, even if count is 0
+    required_severities = ['Critical', 'High', 'Medium', 'Low', 'None']
+    
+    # Prepare final display dictionary
+    final_counts = {}
+    for severity in required_severities:
+        final_counts[severity] = severity_counts.get(severity, 0)
+
+    # Sum up totals and print
+    total_count_sum = sum(final_counts.values())
+
+    # Print results
+    print(f"| {'Severity':<10} | {'Count':>8} |")
+    print(f"| {'-'*10} | {'-'*8} |")
+    for severity, count in final_counts.items():
+        print(f"| {severity:<10} | {count:>8,} |")
+    
+    print(f"| {'='*10} | {'='*8} |")
+    print(f"| {'TOTAL':<10} | {total_count_sum:>8,} |")
+    print("-" * 50)
+    print("Processing complete.")
+
+
+if __name__ == "__main__":
+    # Check if a file path argument was provided
+    if len(sys.argv) != 2:
+        print("Usage: python wiz_report_processor.py \"<path_to_wiz_report.csv>\"")
         sys.exit(1)
-        
-    # The input file path is the second argument (index 1)
-    input_file_path = sys.argv[1]
     
-    # Execute the main function with the provided file path
-    analyze_and_filter_report(input_file_path)
+    # Get the file path from the command-line arguments
+    input_file_path = sys.argv[1]
+    process_wiz_report(input_file_path)
