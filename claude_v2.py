@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-"""
-Wiz Vulnerability Report Team Filter & Analyzer
-Filters vulnerabilities by team based on asset name and location path,
-generates separate Excel reports, and displays professional summary statistics.
-"""
-
 import sys
 import pandas as pd
 from pathlib import Path
