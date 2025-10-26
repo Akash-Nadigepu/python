@@ -10,10 +10,59 @@ COL_SEVERITY = 'Vendor Severity' # Column J
 COL_LOCATION = 'Location Path'   # Column Q
 COL_ASSET_NAME = 'Asset Name'     # Column Y
 
+def get_severity_series(df, name):
+    """
+    Calculates severity counts for a DataFrame and ensures all required
+    severity levels ('Critical', 'High', 'Medium', 'Low', 'None') are present,
+    filling missing ones with 0.
+    """
+    required_severities = ['Critical', 'High', 'Medium', 'Low', 'None']
+
+    # Standardize severity column: Fill missing/NaT with 'None', clean whitespace
+    # Note: We rely on the input having 'Critical', 'High', etc., names.
+    counts = df[COL_SEVERITY].astype(str).str.strip().value_counts()
+    
+    # Reindex to ensure all required severities are present, filling missing with 0,
+    # and rename the series for concatenation.
+    counts = counts.reindex(required_severities, fill_value=0).rename(name)
+    return counts
+
+def print_severity_table(report_df):
+    """
+    Prints the multi-column severity report in a clean, aligned console table.
+    """
+    print("=" * 75)
+    print(f"| {'SEVERITY':<10} | {'TOTAL':>15} | {'SRE TEAM':>15} | {'DEV TEAM':>15} | {'DB TEAM':>15} |")
+    print("=" * 75)
+
+    # Print each severity row
+    for severity in report_df.index:
+        row = report_df.loc[severity]
+        print(
+            f"| {severity:<10} | "
+            f"{row['Total']:>15,} | "
+            f"{row['SRE Team']:>15,} | "
+            f"{row['Dev Team']:>15,} | "
+            f"{row['DB Team']:>15,} |"
+        )
+
+    # Print the final sum row
+    total_sum = report_df.sum()
+    print("-" * 75)
+    print(
+        f"| {'GRAND SUM':<10} | "
+        f"{total_sum['Total']:>15,} | "
+        f"{total_sum['SRE Team']:>15,} | "
+        f"{total_sum['Dev Team']:>15,} | "
+        f"{total_sum['DB Team']:>15,} |"
+    )
+    print("=" * 75)
+
+
 def process_wiz_report(file_path):
     """
     Loads a Wiz report CSV, filters it into three teams (Dev, SRE, DB),
-    generates separate Excel files, and prints a severity summary.
+    generates separate Excel files, and prints a multi-column severity summary.
     """
     print(f"--- Starting Report Processing for: {file_path} ---")
 
@@ -38,7 +87,7 @@ def process_wiz_report(file_path):
         return
 
     total_records = len(df)
-    print(f"Successfully loaded {total_records} total records.")
+    print(f"Successfully loaded {total_records:,} total records.")
     print("-" * 50)
 
 
@@ -55,7 +104,7 @@ def process_wiz_report(file_path):
     # --- LEVEL 2: Dev Team vs. SRE Team (within the Dev/SRE Pool) ---
     
     # Dev Team: Location Path (Q) contains '.m2' OR 'xml-data' (case-insensitive)
-    dev_filter = df_dev_sre_pool[COL_LOCATION].str.contains('.m2|xml-data', case=False, na=False)
+    dev_filter = df_dev_sre_pool[COL_LOCATION].str.contains(r'\.m2|xml-data', case=False, na=False)
     df_dev_team = df_dev_sre_pool[dev_filter].copy()
 
     # SRE Team: The remainder of the Dev/SRE Pool
@@ -74,51 +123,27 @@ def process_wiz_report(file_path):
     for team_name, (file_name, team_df) in output_files.items():
         try:
             team_df.to_excel(file_name, index=False)
-            print(f"  - {team_name} report saved to '{file_name}' ({len(team_df)} records)")
+            print(f"  - {team_name} report saved to '{file_name}' ({len(team_df):,} records)")
         except Exception as e:
             print(f"  - ERROR: Failed to write {team_name} report to {file_name}. Details: {e}")
 
     print("-" * 50)
     
     
-    # 4. Console Reporting (Severity Count)
+    # 4. Console Reporting (Multi-Column Severity Table)
+    
+    # Calculate counts for all four groups
+    s_total = get_severity_series(df, 'Total')
+    s_sre = get_severity_series(df_sre_team, 'SRE Team')
+    s_dev = get_severity_series(df_dev_team, 'Dev Team')
+    s_db = get_severity_series(df_db_team, 'DB Team')
 
-    print("Severity Count Report (from original dataset):")
-    
-    # Standardize severity names and fill missing with 'None'
-    severity_map = {
-        'Critical': 'Critical',
-        'High': 'High',
-        'Medium': 'Medium',
-        'Low': 'Low',
-        # Handles cases where 'None' might be represented differently or is blank
-        'N/A': 'None',
-        'Informational': 'None' 
-    }
-    
-    # Apply standardization and count
-    severity_counts = df[COL_SEVERITY].astype(str).str.strip().replace(severity_map, regex=True).value_counts()
-    
-    # Ensure all required severity levels are present, even if count is 0
-    required_severities = ['Critical', 'High', 'Medium', 'Low', 'None']
-    
-    # Prepare final display dictionary
-    final_counts = {}
-    for severity in required_severities:
-        final_counts[severity] = severity_counts.get(severity, 0)
+    # Combine into a single DataFrame
+    report_df = pd.concat([s_total, s_sre, s_dev, s_db], axis=1)
 
-    # Sum up totals and print
-    total_count_sum = sum(final_counts.values())
-
-    # Print results
-    print(f"| {'Severity':<10} | {'Count':>8} |")
-    print(f"| {'-'*10} | {'-'*8} |")
-    for severity, count in final_counts.items():
-        print(f"| {severity:<10} | {count:>8,} |")
+    print("Multi-Column Severity Count Report:")
+    print_severity_table(report_df)
     
-    print(f"| {'='*10} | {'='*8} |")
-    print(f"| {'TOTAL':<10} | {total_count_sum:>8,} |")
-    print("-" * 50)
     print("Processing complete.")
 
 
