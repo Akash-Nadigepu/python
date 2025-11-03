@@ -1,62 +1,38 @@
+
 import sys
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 import warnings
-from datetime import datetime
 
 # Suppress openpyxl warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
-class PortalConfig:
-    """Configuration for different portals."""
-    
-    BROKER = {
-        'name': 'Broker',
-        'teams': ['Dev', 'SRE', 'DB'],
-        'filtration_type': 'asset_based'
-    }
-    
-    SHOPPER = {
-        'name': 'Shopper',
-        'teams': ['Dev', 'SRE'],
-        'filtration_type': 'location_based'
-    }
-    
-    EMPLOYER = {
-        'name': 'Employer',
-        'teams': ['Dev', 'SRE'],
-        'filtration_type': 'location_based'
-    }
-    
-    # Dev team location path keywords
-    DEV_KEYWORDS = ['.m2', 'npm', 'node', 'xml', 'jar', 'root']
-    
-    # Broker-specific Dev keywords (more restrictive)
-    BROKER_DEV_KEYWORDS = ['.m2', 'xml-data']
-
-
 class WizReportAnalyzer:
-    """Analyzes and filters Wiz vulnerability reports by portal and team."""
+    """Analyzes and filters Wiz vulnerability reports by team."""
     
     SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low', 'None']
     
     def __init__(self, input_file: str):
         """Initialize analyzer with input file path."""
         self.input_file = Path(input_file)
-        self.base_filename = self.input_file.stem  # e.g., "wiz_report"
         self.df = None
-        self.portal_config = None
-        self.portal_name = None
-        self.teams_data = {}
+        self.dev_team_df = None
+        self.sre_team_df = None
+        self.db_team_df = None
+        self.month_name = self._extract_month_from_filename()
         
     def load_data(self) -> None:
         """Load CSV file with error handling."""
         try:
-            print(f"\n📂 Loading file: {self.input_file.name}")
+            print(f"📂 Loading file: {self.input_file.name}")
             self.df = pd.read_csv(self.input_file)
-            print(f"✓ Successfully loaded {len(self.df):,} records\n")
+            print(f"✓ Successfully loaded {len(self.df)} records")
+            if self.month_name:
+                print(f"✓ Detected month: {self.month_name}\n")
+            else:
+                print()
         except FileNotFoundError:
             raise FileNotFoundError(f"❌ Error: File '{self.input_file}' not found")
         except pd.errors.EmptyDataError:
@@ -72,45 +48,8 @@ class WizReportAnalyzer:
         if missing_columns:
             raise ValueError(f"❌ Error: Missing required columns: {', '.join(missing_columns)}")
     
-    def select_portal(self) -> None:
-        """Interactive portal selection."""
-        print("=" * 60)
-        print("WIZ REPORT ANALYZER".center(60))
-        print("=" * 60)
-        print("\nSelect Portal:")
-        print("  1. Broker")
-        print("  2. Shopper")
-        print("  3. Employer")
-        print()
-        
-        while True:
-            try:
-                choice = input("Enter your choice (1-3): ").strip()
-                
-                if choice == '1':
-                    self.portal_config = PortalConfig.BROKER
-                    self.portal_name = 'Broker'
-                    break
-                elif choice == '2':
-                    self.portal_config = PortalConfig.SHOPPER
-                    self.portal_name = 'Shopper'
-                    break
-                elif choice == '3':
-                    self.portal_config = PortalConfig.EMPLOYER
-                    self.portal_name = 'Employer'
-                    break
-                else:
-                    print("❌ Invalid choice. Please enter 1, 2, or 3.")
-            except KeyboardInterrupt:
-                print("\n\n❌ Operation cancelled by user.")
-                sys.exit(0)
-            except Exception as e:
-                print(f"❌ Error: {str(e)}")
-        
-        print(f"\n✓ Selected portal: {self.portal_name}\n")
-    
     def filter_teams(self) -> None:
-        """Apply portal-specific team filtration logic."""
+        """Apply team filtration logic."""
         print("🔍 Applying team filtration logic...")
         
         # Clean data - handle NaN values
@@ -125,51 +64,34 @@ class WizReportAnalyzer:
             'Info': 'None'
         })
         
-        if self.portal_config['filtration_type'] == 'asset_based':
-            self._filter_broker_teams()
-        else:
-            self._filter_location_based_teams()
-        
-        # Display counts
-        for team_name, df in self.teams_data.items():
-            print(f"✓ {team_name} Team: {len(df):,} records")
-        print()
-    
-    def _filter_broker_teams(self) -> None:
-        """Broker-specific filtration: Asset-based + Location-based."""
-        # Bamboo assets
+        # First level filtration: Check if AssetName contains "bamboo" (case-insensitive)
         bamboo_mask = self.df['AssetName'].str.lower().str.contains('bamboo', na=False, regex=False)
         
-        # Dev: Bamboo assets with specific location paths
-        dev_location_mask = pd.Series([False] * len(self.df))
-        for keyword in PortalConfig.BROKER_DEV_KEYWORDS:
-            dev_location_mask |= self.df['LocationPath'].str.contains(keyword, na=False, regex=False, case=False)
+        # Second level filtration for bamboo assets: Check LocationPath
+        dev_mask = bamboo_mask & (
+            self.df['LocationPath'].str.contains('.m2', na=False, regex=False) |
+            self.df['LocationPath'].str.contains('xml-data', na=False, regex=False)
+        )
         
-        dev_mask = bamboo_mask & dev_location_mask
+        sre_mask = bamboo_mask & ~dev_mask
         
-        # SRE: Bamboo assets without dev location paths
-        sre_mask = bamboo_mask & ~dev_location_mask
-        
-        # DB: Non-bamboo, non-tableau assets
+        # DB Team: exclude bamboo AND exclude tableau assets (case-insensitive)
         tableau_mask = self.df['AssetName'].str.lower().str.contains('tableau', na=False, regex=False)
         db_mask = ~bamboo_mask & ~tableau_mask
         
-        self.teams_data['Dev'] = self.df[dev_mask].copy()
-        self.teams_data['SRE'] = self.df[sre_mask].copy()
-        self.teams_data['DB'] = self.df[db_mask].copy()
-    
-    def _filter_location_based_teams(self) -> None:
-        """Shopper/Employer filtration: Location-based only."""
-        # Dev: Location path contains any dev keywords
-        dev_mask = pd.Series([False] * len(self.df))
-        for keyword in PortalConfig.DEV_KEYWORDS:
-            dev_mask |= self.df['LocationPath'].str.contains(keyword, na=False, regex=False, case=False)
+        # Debug: Print tableau asset count
+        tableau_count = tableau_mask.sum()
+        if tableau_count > 0:
+            print(f"ℹ️  Excluded {tableau_count} Tableau assets from DB Team")
         
-        # SRE: Everything else
-        sre_mask = ~dev_mask
+        # Split dataframes
+        self.dev_team_df = self.df[dev_mask].copy()
+        self.sre_team_df = self.df[sre_mask].copy()
+        self.db_team_df = self.df[db_mask].copy()
         
-        self.teams_data['Dev'] = self.df[dev_mask].copy()
-        self.teams_data['SRE'] = self.df[sre_mask].copy()
+        print(f"✓ Dev Team: {len(self.dev_team_df)} records")
+        print(f"✓ SRE Team: {len(self.sre_team_df)} records")
+        print(f"✓ DB Team: {len(self.db_team_df)} records\n")
     
     def get_severity_counts(self, df: pd.DataFrame) -> Dict[str, int]:
         """Get counts for each severity level."""
@@ -181,22 +103,24 @@ class WizReportAnalyzer:
         
         return counts
     
-    def get_hasexploit_counts(self, df: pd.DataFrame) -> Tuple[int, int]:
-        """Get HasExploit counts for Critical and High severities."""
-        critical_count = len(df[df['VendorSeverity'] == 'Critical'])
-        high_count = len(df[df['VendorSeverity'] == 'High'])
-        return critical_count, high_count
-    
-    def generate_team_excels(self) -> None:
+    def generate_excel_reports(self) -> None:
         """Generate separate Excel files for each team."""
-        print("📊 Generating team Excel reports...")
+        print("📊 Generating Excel reports...")
         
-        for team_name, df in self.teams_data.items():
+        # Determine month suffix
+        month_suffix = f"_{self.month_name}" if self.month_name else ""
+        
+        reports = [
+            (f'Dev_Team{month_suffix}.xlsx', self.dev_team_df, 'Dev Team'),
+            (f'SRE_Team{month_suffix}.xlsx', self.sre_team_df, 'SRE Team'),
+            (f'DB_Team{month_suffix}.xlsx', self.db_team_df, 'DB Team')
+        ]
+        
+        for filename, df, team_name in reports:
             try:
-                filename = f"{team_name}_{self.base_filename}.xlsx"
                 output_path = Path(filename)
                 df.to_excel(output_path, index=False, engine='openpyxl')
-                print(f"✓ {team_name} Team: {filename} ({len(df):,} records)")
+                print(f"✓ {team_name}: {filename} ({len(df)} records)")
             except Exception as e:
                 print(f"❌ Error generating {filename}: {str(e)}")
                 raise
@@ -204,111 +128,176 @@ class WizReportAnalyzer:
         print()
     
     def generate_summary_excel(self) -> None:
-        """Generate summary Excel with exact layout from requirements."""
-        print("📊 Generating summary Excel report...")
+        """Generate summary Excel file with severity counts."""
+        print("📊 Generating summary report...")
+        
+        # Get counts for each team
+        dev_counts = self.get_severity_counts(self.dev_team_df)
+        sre_counts = self.get_severity_counts(self.sre_team_df)
+        db_counts = self.get_severity_counts(self.db_team_df) if self.db_team_df is not None else None
+        
+        # Get HasExploit counts for SRE team (Critical and High only where HasExploit = Yes/True)
+        sre_exploit_counts = self._get_exploit_counts(self.sre_team_df)
+        
+        # Calculate total counts
+        if db_counts:
+            total_counts = {
+                severity: dev_counts[severity] + sre_counts[severity] + db_counts[severity]
+                for severity in ['Total'] + self.SEVERITY_ORDER
+            }
+        else:
+            total_counts = {
+                severity: dev_counts[severity] + sre_counts[severity]
+                for severity in ['Total'] + self.SEVERITY_ORDER
+            }
+        
+        # Create summary data
+        summary_data = {
+            'Severity': ['Total', 'Critical', 'High', 'Medium', 'Low', 'None'],
+            'Total': [
+                total_counts['Total'],
+                total_counts['Critical'],
+                total_counts['High'],
+                total_counts['Medium'],
+                total_counts['Low'],
+                total_counts['None']
+            ],
+            'SRE_Team_Label': ['', 'Critical', 'High', 'Medium', 'Low', 'None'],
+            'SRE_Team': [
+                sre_counts['Total'],
+                sre_counts['Critical'],
+                sre_counts['High'],
+                sre_counts['Medium'],
+                sre_counts['Low'],
+                sre_counts['None']
+            ],
+            'HasExploit_True': [
+                '',
+                sre_exploit_counts.get('Critical', 0),
+                sre_exploit_counts.get('High', 0),
+                '',
+                '',
+                ''
+            ],
+            'Dev_Team_Label': ['', 'Critical', 'High', 'Medium', 'Low', 'None'],
+            'Dev_Team': [
+                dev_counts['Total'],
+                dev_counts['Critical'],
+                dev_counts['High'],
+                dev_counts['Medium'],
+                dev_counts['Low'],
+                dev_counts['None']
+            ]
+        }
+        
+        # Add DB Team columns if broker portal
+        if db_counts:
+            summary_data['DB_Team_Label'] = ['', 'Critical', 'High', 'Medium', 'Low', 'None']
+            summary_data['DB_Team'] = [
+                db_counts['Total'],
+                db_counts['Critical'],
+                db_counts['High'],
+                db_counts['Medium'],
+                db_counts['Low'],
+                db_counts['None']
+            ]
+        
+        # Create DataFrame
+        summary_df = pd.DataFrame(summary_data)
+        
+        # Generate summary Excel filename
+        summary_filename = f'Summary_{self.base_filename}.xlsx'
         
         try:
-            filename = f"Summary_{self.base_filename}.xlsx"
-            
-            # Get severity counts for each team
-            team_counts = {}
-            for team_name, df in self.teams_data.items():
-                team_counts[team_name] = self.get_severity_counts(df)
-            
-            # Get HasExploit counts for SRE team
-            sre_critical_exploit, sre_high_exploit = self.get_hasexploit_counts(
-                self.teams_data['SRE'][
-                    self.teams_data['SRE']['VendorSeverity'].isin(['Critical', 'High'])
-                ]
-            )
-            
-            # Calculate total counts (excluding HasExploit reference data)
-            total_counts = {severity: 0 for severity in ['Total'] + self.SEVERITY_ORDER}
-            for team_name in self.teams_data.keys():
-                for severity in ['Total'] + self.SEVERITY_ORDER:
-                    total_counts[severity] += team_counts[team_name][severity]
-            
-            # Build summary data with exact layout
-            summary_data = []
-            
-            if 'DB' in self.teams_data:
-                # Broker portal layout (3 teams)
-                summary_data.append(['Total', '', '', 'SRE Team', 'HasExploit = True', '', '', 'Dev Team', '', '', 'DB Team', ''])
+            with pd.ExcelWriter(summary_filename, engine='openpyxl') as writer:
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
                 
-                # Add severity rows
-                for severity in self.SEVERITY_ORDER:
-                    row = [
-                        severity,
-                        total_counts[severity],
-                        '',
-                        severity,
-                        sre_critical_exploit if severity == 'Critical' else (sre_high_exploit if severity == 'High' else ''),
-                        '',
-                        '',
-                        severity,
-                        team_counts['Dev'][severity],
-                        '',
-                        severity,
-                        team_counts['DB'][severity]
-                    ]
-                    summary_data.append(row)
-            else:
-                # Shopper/Employer portal layout (2 teams)
-                summary_data.append(['Total', '', '', 'SRE Team', 'HasExploit = True', '', '', 'Dev Team', ''])
+                # Get workbook to format
+                workbook = writer.book
+                worksheet = writer.sheets['Summary']
                 
-                # Add severity rows
-                for severity in self.SEVERITY_ORDER:
-                    row = [
-                        severity,
-                        total_counts[severity],
-                        '',
-                        severity,
-                        sre_critical_exploit if severity == 'Critical' else (sre_high_exploit if severity == 'High' else ''),
-                        '',
-                        '',
-                        severity,
-                        team_counts['Dev'][severity]
-                    ]
-                    summary_data.append(row)
+                # Set column widths
+                worksheet.column_dimensions['A'].width = 12
+                worksheet.column_dimensions['B'].width = 12
+                worksheet.column_dimensions['C'].width = 15
+                worksheet.column_dimensions['D'].width = 12
+                worksheet.column_dimensions['E'].width = 18
+                worksheet.column_dimensions['F'].width = 15
+                worksheet.column_dimensions['G'].width = 12
+                
+                if db_counts:
+                    worksheet.column_dimensions['H'].width = 15
+                    worksheet.column_dimensions['I'].width = 12
             
-            # Create DataFrame and save
-            df_summary = pd.DataFrame(summary_data)
-            
-            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-                df_summary.to_excel(writer, index=False, header=False, sheet_name='Summary')
-            
-            print(f"✓ Summary: {filename}")
-            print()
+            print(f"✓ Summary: {summary_filename}")
             
         except Exception as e:
-            print(f"❌ Error generating summary Excel: {str(e)}")
+            print(f"❌ Error generating summary file: {str(e)}")
             raise
     
-    def print_completion_summary(self) -> None:
-        """Print completion summary to console."""
-        print("=" * 60)
-        print("ANALYSIS COMPLETED SUCCESSFULLY".center(60))
-        print("=" * 60)
-        print(f"\n📋 Portal: {self.portal_name}")
-        print(f"📁 Input File: {self.input_file.name}")
-        print(f"📊 Total Records: {len(self.df):,}")
-        print(f"📅 Processing Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("\n📦 Generated Files:")
-        for team_name in self.teams_data.keys():
-            print(f"   ✓ {team_name}_{self.base_filename}.xlsx")
-        print(f"   ✓ Summary_{self.base_filename}.xlsx")
-        print("\n✅ All files generated successfully!\n")
+    def _get_exploit_counts(self, df: pd.DataFrame) -> dict:
+        """Get counts of records where HasExploit = Yes/True for Critical and High severity."""
+        if df is None or len(df) == 0:
+            return {}
+        
+        # Check if HasExploit column exists
+        if 'HasExploit' not in df.columns:
+            return {}
+        
+        # Filter for HasExploit = Yes or True (case-insensitive)
+        exploit_mask = df['HasExploit'].astype(str).str.lower().isin(['yes', 'true'])
+        exploit_df = df[exploit_mask]
+        
+        # Count by severity
+        counts = {}
+        for severity in ['Critical', 'High']:
+            count = len(exploit_df[exploit_df['VendorSeverity'] == severity])
+            if count > 0:
+                counts[severity] = count
+        
+        return counts
+    
+    @staticmethod
+    def _get_severity_emoji(severity: str) -> str:
+        """Get emoji for severity level."""
+        emoji_map = {
+            'Critical': '🔴',
+            'High': '🟠',
+            'Medium': '🟡',
+            'Low': '🟢',
+            'None': '⚪'
+        }
+        return emoji_map.get(severity, '⚫')
+    
+    def _extract_month_from_filename(self) -> str:
+        """Extract month name from filename (e.g., 'Oct', 'Aug', 'Sep')."""
+        import re
+        
+        # Exact 3-letter month abbreviations (case-insensitive)
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        
+        # Get the full filename including path
+        filename = str(self.input_file)
+        
+        # Search for month pattern anywhere in the filename (case-insensitive)
+        for month in months:
+            # Use case-insensitive search
+            pattern = re.compile(month, re.IGNORECASE)
+            if pattern.search(filename):
+                return month
+        
+        return None
     
     def run(self) -> None:
         """Execute the complete analysis workflow."""
         try:
-            self.select_portal()
             self.load_data()
             self.validate_columns()
             self.filter_teams()
-            self.generate_team_excels()
-            self.generate_summary_excel()
-            self.print_completion_summary()
+            self.generate_excel_reports()
+            self.print_summary_table()
+            print("✅ Analysis completed successfully!\n")
             
         except Exception as e:
             print(f"\n{str(e)}\n")
@@ -317,12 +306,13 @@ class WizReportAnalyzer:
 
 def main():
     """Main entry point."""
+    print("\n" + "=" * 95)
+    print("WIZ VULNERABILITY REPORT ANALYZER".center(95))
+    print("=" * 95 + "\n")
+    
     # Check command-line arguments
     if len(sys.argv) != 2:
-        print("\n" + "=" * 60)
-        print("WIZ VULNERABILITY REPORT ANALYZER".center(60))
-        print("=" * 60)
-        print("\n❌ Usage: python code.py <input_csv_file>")
+        print("❌ Usage: python code.py <input_csv_file>")
         print("Example: python code.py wiz_report.csv\n")
         sys.exit(1)
     
@@ -330,7 +320,7 @@ def main():
     
     # Check if file exists
     if not Path(input_file).exists():
-        print(f"\n❌ Error: File '{input_file}' does not exist\n")
+        print(f"❌ Error: File '{input_file}' does not exist\n")
         sys.exit(1)
     
     # Run analyzer
