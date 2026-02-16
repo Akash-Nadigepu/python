@@ -76,22 +76,28 @@ class WizReportAnalyzer:
         """Calculate and add Age_Days column to the DataFrame."""
         print("📅 Calculating vulnerability age...")
         
-        current_date = datetime.now()
+        current_date = pd.Timestamp.now()
         
         def calculate_age(row):
             """Calculate age in days for a single vulnerability."""
             # Parse FirstDetected date
-            first_detected = pd.to_datetime(row['FirstDetected'], errors='coerce')
+            first_detected = pd.to_datetime(row['FirstDetected'], errors='coerce', utc=True)
             
             if pd.isna(first_detected):
                 return None
             
+            # Remove timezone info to avoid comparison issues
+            first_detected = first_detected.tz_localize(None) if first_detected.tzinfo else first_detected
+            
             # Determine end date
             if row.get('FindingStatus') == 'Resolved' and pd.notna(row.get('ResolvedAt')):
                 # For resolved items, use ResolvedAt date
-                end_date = pd.to_datetime(row['ResolvedAt'], errors='coerce')
+                end_date = pd.to_datetime(row['ResolvedAt'], errors='coerce', utc=True)
                 if pd.isna(end_date):
                     end_date = current_date
+                else:
+                    # Remove timezone info
+                    end_date = end_date.tz_localize(None) if end_date.tzinfo else end_date
             else:
                 # For open/in-progress items, use current date
                 end_date = current_date
