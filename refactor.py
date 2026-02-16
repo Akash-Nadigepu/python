@@ -284,7 +284,9 @@ class WizReportAnalyzer:
             summary_data = []
             
             if 'DB' in self.teams_data:
-                # Broker portal layout (3 teams) - Start with severity rows directly
+                # Broker portal layout (3 teams) - Add header row first
+                summary_data.append(['Total', '', '', 'SRE Team', '', 'HasExploit = True', '', 'Dev Team', '', '', 'DB Team', ''])
+                
                 # Add severity rows
                 for severity in self.SEVERITY_ORDER:
                     row = [
@@ -303,7 +305,9 @@ class WizReportAnalyzer:
                     ]
                     summary_data.append(row)
             else:
-                # Shopper/Employer portal layout (2 teams) - Start with severity rows directly
+                # Shopper/Employer portal layout (2 teams) - Add header row first
+                summary_data.append(['Total', '', '', 'SRE Team', '', 'HasExploit = True', '', 'Dev Team', ''])
+                
                 # Add severity rows
                 for severity in self.SEVERITY_ORDER:
                     row = [
