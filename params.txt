@@ -1,0 +1,16 @@
+
+node_filesystem_avail_bytes
+system_cpu_usage
+jvm_memory_used_bytes
+kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions
+kafka.server:type=ReplicaManager,name=LeaderCount
+kafka.server:type=FetcherLagMetrics
+kafka.consumer:type=consumer-fetch-manager-metrics
+records-consumed-rate
+record-send-rate
+kafka.network:type=RequestChannel,name=RequestQueueSize
+NetworkProcessorAvgIdlePercent
+log.retention.bytes / segment
+log.retention.ms
+kafka.controller:type=KafkaController,name=ActiveControllerCount
+OfflinePartitionsCount
