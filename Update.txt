@@ -1,0 +1,10 @@
+Hi team, quick update on today’s DR OCP activity for PTP broker portal 👇
+✅ Mapped brokerportal-drocp.anthem.com to DR NLB + added valid cert — traffic working internally. No prod impact.
+✅ Created a new DR cluster route to fix failover routing — traffic now reaching DR OCP pods correctly.
+✅ Site Manager whitelisting done — login is now functional on the new DROCP route.
+🔄 UI loading and reaching broker dashboard after fixes with Dev POCs. Full dashboard data pending — a few upstream services still to be deployed.
+Action items:
+	•	Dev — Sync DR config profiles with prod + apply Vault changes in DR going forward.
+	•	DevOps — Ensure same images in prod and DR at all times.
+	•	Dev Teams — Need at least one POC per team for end-to-end DR testing (PTP + PAT).
+Screenshots attached. Happy to discuss if any questions!
